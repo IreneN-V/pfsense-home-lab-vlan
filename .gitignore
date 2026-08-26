@@ -1,0 +1,7 @@
+# pfSense config backups — passwords/keys
+*.xml
+configs/*.xml
+
+# system files 
+.DS_Store
+Thumbs.db
