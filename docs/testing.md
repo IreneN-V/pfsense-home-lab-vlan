@@ -1,118 +1,96 @@
-\# Testing — VLAN Isolation
+\# Firewall Rules
 
 
 
-\## Setup
+\## Interface Overview
 
-Two test VMs, manually VLAN-tagged (VirtualBox does not support 802.1Q tagging 
 
-at the virtual switch level, so tagging was done inside each guest OS):
 
+| Interface   | VLAN | Subnet             | Purpose                          |
 
+|-------------|------|---------------------|-----------------------------------|
 
-\- \*\*Kali Linux\*\* — tagged into VLAN 10 (LAN\_TRUSTED), IP `192.168.10.100`
+| LAN\_TRUSTED | 10   | 192.168.10.0/24     | Trusted personal devices          |
 
+| IOT         | 20   | 192.168.20.0/24     | IoT devices, isolated from trust  |
 
+| GUEST       | 30   | 192.168.30.0/24     | Guest Wi-Fi, fully isolated       |
 
-ip link add link eth0 name eth0.10 type vlan id 10
 
-ip link set eth0.10 up
 
-dhclient eth0.10
+!\[Interface assignments](../screenshots/interface\_assignments.png)
 
 
 
-\- \*\*Debian\*\* — tagged into VLAN 20 (IOT), IP `192.168.20.100`
+\## LAN\_TRUSTED Rules
 
+Trusted devices have unrestricted outbound access, including to other VLANs.
 
 
-ip link add link enp0s3 name enp0s3.20 type vlan id 20
 
-ip link set enp0s3.20 up
+!\[LAN\_TRUSTED rules](../screenshots/LAN\_TRUSTED\_rules.png)
 
-dhcpcd enp0s3.20
 
 
+| Rule | Source | Destination | Action |
 
+|------|--------|-------------|--------|
 
+| Allow LAN\_TRUSTED to anywhere | LAN\_TRUSTED subnets | Any | Pass |
 
-Each VM's original untagged default route was removed to avoid routing conflicts 
 
-between the native LAN interface and the new VLAN sub-interface:
 
+\## IOT Rules
 
+IoT devices can reach the internet but are blocked from both other internal 
 
-ip route del default via 192.168.1.1 dev <interface>
+VLANs, limiting the blast radius of a compromised IoT device.
 
 
 
+!\[IOT rules](../screenshots/IOT\_rules.png)
 
 
-\## Test 1 — LAN\_TRUSTED → IOT (expected: allowed)
 
-LAN\_TRUSTED has a permissive "allow to anywhere" rule, so trusted devices can 
+| Rule | Source | Destination | Action |
 
-reach other VLANs.
+|------|--------|-------------|--------|
 
+| Block IOT to LAN\_TRUSTED | IOT subnets | 192.168.10.0/24 | Block |
 
+| Block IOT to GUEST | IOT subnets | 192.168.30.0/24 | Block |
 
-ping -c 4 -I eth0.10 192.168.20.100
+| Allow IOT to internet | IOT subnets | Any | Pass |
 
 
 
-Result: \*\*0% packet loss\*\* — traffic passed as expected.
+\## GUEST Rules
 
+Guest network is fully isolated from internal VLANs, internet-only.
 
 
-!\[LAN to IOT ping success](../screenshots/LAN\_TRUSTED\_PING\_IOT.png)
 
+!\[GUEST rules](../screenshots/GUEST\_rules.png)
 
 
-\## Test 2 — IOT → LAN\_TRUSTED (expected: blocked)
 
-IOT is explicitly blocked from reaching LAN\_TRUSTED, to prevent a compromised 
+| Rule | Source | Destination | Action |
 
-IoT device from accessing trusted devices.
+|------|--------|-------------|--------|
 
+| Block GUEST to LAN\_TRUSTED | GUEST subnets | 192.168.10.0/24 | Block |
 
+| Block GUEST to IOT | GUEST subnets | 192.168.20.0/24 | Block |
 
-ping -c 4 -I enp0s3.20 192.168.10.100
+| Allow GUEST to internet | GUEST subnets | Any | Pass |
 
 
 
-Result: \*\*100% packet loss\*\* — traffic blocked as expected.
+\## Rule Ordering
 
+pfSense evaluates rules top-down, first match wins. Block rules are placed 
 
+above the general "allow to internet" rule on both IOT and GUEST — otherwise 
 
-The firewall log confirms the block was enforced by the intended rule 
-
-(`Block IOT to LAN\_TRUSTED`), not a generic default-deny:
-
-
-
-!\[Firewall log showing block](../screenshots/IOT\_BLOCKED\_LOGS.png)
-
-
-
-\## Troubleshooting note
-
-An early test run showed both directions blocked, and the firewall log listed 
-
-the traffic under interface `LAN` instead of `IOT`. Root cause: both test VMs 
-
-still had their original untagged default route active (via the LAN interface), 
-
-which raced with the new VLAN route and caused traffic to take the wrong path. 
-
-Removing the stale default route on each VM resolved this.
-
-
-
-\## Conclusion
-
-VLAN segmentation and firewall rules behave as designed: LAN\_TRUSTED has open 
-
-access, IOT and GUEST are isolated from LAN\_TRUSTED and from each other, while 
-
-all VLANs retain internet access.
+the permissive rule would match first and the blocks would never be reached.
 
